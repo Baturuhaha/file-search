@@ -2,6 +2,10 @@ import os
 from PyPDF2 import PdfReader
 from docx import Document
 import sqlite3
+import logging
+
+# 设置日志记录
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 创建数据库连接
 conn = sqlite3.connect('document_index.db')
@@ -19,6 +23,9 @@ def index_documents(root_dir):
     """
     遍历指定根目录及其子目录，索引所有PDF和Word文档。
     """
+    batch_size = 100  # 批量插入大小
+    documents_to_insert = []
+    
     for root, dirs, files in os.walk(root_dir):
         for file in files:
             file_path = os.path.join(root, file)
@@ -29,21 +36,28 @@ def index_documents(root_dir):
                         content = ''
                         for page in reader.pages:
                             content += page.extract_text()
-                        cursor.execute('INSERT OR IGNORE INTO documents (file_path, content) VALUES (?, ?)',
-                                       (file_path, content))
-                        conn.commit()
+                        documents_to_insert.append((file_path, content))
                 except Exception as e:
-                    print(f"Error processing {file_path}: {str(e)}")
+                    logging.error(f"Error processing {file_path}: {str(e)}")
             elif file.endswith('.docx'):
                 try:
                     with open(file_path, 'rb') as f:
                         doc = Document(f)
                         content = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
-                        cursor.execute('INSERT OR IGNORE INTO documents (file_path, content) VALUES (?, ?)',
-                                       (file_path, content))
-                        conn.commit()
+                        documents_to_insert.append((file_path, content))
                 except Exception as e:
-                    print(f"Error processing {file_path}: {str(e)}")
+                    logging.error(f"Error processing {file_path}: {str(e)}")
+            
+            # 批量插入
+            if len(documents_to_insert) >= batch_size:
+                cursor.executemany('INSERT OR IGNORE INTO documents (file_path, content) VALUES (?, ?)', documents_to_insert)
+                conn.commit()
+                documents_to_insert.clear()
+    
+    # 插入剩余的文档
+    if documents_to_insert:
+        cursor.executemany('INSERT OR IGNORE INTO documents (file_path, content) VALUES (?, ?)', documents_to_insert)
+        conn.commit()
 
 def search_documents(query):
     """
